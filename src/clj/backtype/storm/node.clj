@@ -23,18 +23,11 @@
    [pallet.resource.exec-script :as exec-script])
   (:use
    [backtype.storm config]
+   [backtype.storm.branch :only [branch>]]
    [pallet compute core resource phase]
    [pallet [utils :only [make-user]]]
    [org.jclouds.compute2 :only [nodes-in-group]]
    [clojure.walk]))
-
-(defn parse-release [release]
-  (map #(Integer/parseInt %) (.split release "\\.")))
-
-(defn release> [release1 release2]
-  (->> (map - (parse-release release1) (parse-release release2))
-       (take-while #(>= % 0))
-       (some pos?)))
 
 ;; CONSTANTS
 
@@ -73,7 +66,7 @@
      (server-spec
       :extends (base-server-spec)
       :phases {:configure (phase-fn
-                           (zookeeper/install :version "3.3.5")
+                           (zookeeper/install :version "3.3.6")
                            (zookeeper/configure
                             :clientPort (storm-conf "storm.zookeeper.port")
                             :maxClientCnxns 0)
@@ -93,41 +86,41 @@
                       (storm/exec-daemon)
                       (ganglia/ganglia-finish))}))
 
-(defn supervisor-server-spec [name release]
+(defn supervisor-server-spec [name branch commit]
      (server-spec
       :extends (storm-base-server-spec name)
       :phases {:configure (phase-fn
                            (ganglia/ganglia-node (nimbus-name name))
                            (storm/install-supervisor
-                            release
+                            branch commit
                             "/mnt/storm"))
                :post-configure (phase-fn
                                 (ganglia/ganglia-finish)
                                 (storm/write-storm-exec
                                  "supervisor"))}))
 
-(defn maybe-install-drpc [req release]
-  (if (or (not release) (release> release "0.5.3"))
+(defn maybe-install-drpc [req branch]
+  (if (or (not branch) (= branch "master") (branch> branch "0.5.3"))
     (storm/install-drpc req)
     req
     ))
 
-(defn maybe-exec-drpc [req release]
-  (if (or (not release) (release> release "0.5.3"))
+(defn maybe-exec-drpc [req branch]
+  (if (or (not branch) (= branch "master") (branch> branch "0.5.3"))
     (storm/exec-drpc req)
     req
     ))
 
-(defn nimbus-server-spec [name release]
+(defn nimbus-server-spec [name branch commit]
      (server-spec
       :extends (storm-base-server-spec name)
       :phases {:configure (phase-fn
                            (ganglia/ganglia-master (nimbus-name name))
                            (storm/install-nimbus
-                            release
+                            branch commit
                             "/mnt/storm")
                            (storm/install-ui)
-                           (maybe-install-drpc release))
+                           (maybe-install-drpc branch))
                :post-configure (phase-fn
                                 (ganglia/ganglia-finish)
                                 (storm/write-storm-exec
@@ -135,7 +128,7 @@
                                  )
                :exec (phase-fn
                         (storm/exec-ui)
-                        (maybe-exec-drpc release))}))
+                        (maybe-exec-drpc branch))}))
 
 (defn node-spec-from-config [group-name inbound-ports]
   (letfn [(assoc-with-conf-key [image image-key conf-key & {:keys [f] :or {f identity}}]
@@ -169,8 +162,8 @@
                                       [(storm-conf "nimbus.thrift.port")])
     :extends server-spec))
 
-(defn nimbus [name release]
-  (nimbus* name (nimbus-server-spec name release)))
+(defn nimbus [name branch commit]
+  (nimbus* name (nimbus-server-spec name branch commit)))
 
 (defn supervisor* [name server-spec]
   (group-spec
@@ -179,7 +172,7 @@
                                     (storm-conf "supervisor.slots.ports"))
     :extends server-spec))
 
-(defn supervisor [name release]
-  (supervisor* name (supervisor-server-spec name release)))
+(defn supervisor [name branch commit]
+  (supervisor* name (supervisor-server-spec name branch commit)))
 
 
